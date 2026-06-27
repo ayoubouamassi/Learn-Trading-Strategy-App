@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { BookOpen, BarChart3, Landmark, Award, HelpCircle, ChevronDown, CheckCircle, Flame, ShieldAlert, AlertTriangle } from "lucide-react";
+import { BookOpen, BarChart3, Landmark, Award, HelpCircle, ChevronDown, CheckCircle, Flame, ShieldAlert, AlertTriangle, User as UserIcon } from "lucide-react";
 import { scenarios } from "./data/scenarios";
 import { Scenario, Position, Trade, AccountStats } from "./types";
 import TradingChart from "./components/TradingChart";
@@ -14,6 +14,10 @@ import Academy from "./components/Academy";
 import { getLocalizedLessons } from "./data/localizedLessons";
 import { getLocalizedScenario } from "./data/scenarioTranslations";
 import { LanguageCode, languages, translations } from "./data/translations";
+import { onAuthStateChanged, User } from "firebase/auth";
+import { auth, saveUserData, loadUserData } from "./lib/firebase";
+import AuthModal from "./components/AuthModal";
+import { authTranslations } from "./data/authTranslations";
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<"simulator" | "academy">("simulator");
@@ -37,6 +41,10 @@ export default function App() {
   // Educational Progress States
   const [completedLessons, setCompletedLessons] = useState<string[]>([]);
   const [systemAlert, setSystemAlert] = useState<{ type: "success" | "warning" | "error"; text: string } | null>(null);
+  
+  // Account / Cloud Auth States
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
 
   // Chart Indicators State
   const [indicatorToggles, setIndicatorToggles] = useState({
@@ -59,11 +67,59 @@ export default function App() {
     }
   }, []);
 
-  const handleCompleteLesson = (lessonId: string) => {
+  // Sync / Listen to Auth Changes
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user);
+      if (user) {
+        try {
+          const cloudData = await loadUserData(user.uid);
+          if (cloudData && cloudData.completedLessons) {
+            setCompletedLessons((prevLocal) => {
+              const merged = Array.from(new Set([...prevLocal, ...cloudData.completedLessons]));
+              localStorage.setItem("trading_academy_lessons", JSON.stringify(merged));
+              saveUserData(user.uid, {
+                completedLessons: merged,
+                email: user.email || "guest@anonymous.com"
+              });
+              return merged;
+            });
+            const authT = authTranslations[currentLanguage] || authTranslations.en;
+            triggerAlert("success", authT.progressSynced);
+          } else {
+            // First time login, push existing local progress to cloud
+            const saved = localStorage.getItem("trading_academy_lessons");
+            const localLessons = saved ? JSON.parse(saved) : [];
+            await saveUserData(user.uid, {
+              completedLessons: localLessons,
+              email: user.email || "guest@anonymous.com"
+            });
+          }
+        } catch (err) {
+          console.error("Error synchronizing cloud data on auth:", err);
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [currentLanguage]);
+
+  const handleCompleteLesson = async (lessonId: string) => {
     if (!completedLessons.includes(lessonId)) {
       const next = [...completedLessons, lessonId];
       setCompletedLessons(next);
       localStorage.setItem("trading_academy_lessons", JSON.stringify(next));
+      
+      if (currentUser) {
+        try {
+          await saveUserData(currentUser.uid, {
+            completedLessons: next,
+            email: currentUser.email || "guest@anonymous.com"
+          });
+        } catch (e) {
+          console.error("Failed to save completed lesson to Firestore:", e);
+        }
+      }
+      
       triggerAlert("success", `🎉 ${t.lessonCompletedAlert || "Lesson completed!"}`);
     }
   };
@@ -332,6 +388,24 @@ export default function App() {
 
         {/* Language dropdown and Scenario dropdown */}
         <div className="flex flex-wrap items-center gap-3" id="navigation-actions-wrapper">
+          {/* Cloud Sync / Account Button */}
+          <button
+            onClick={() => setAuthModalOpen(true)}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold border transition cursor-pointer ${
+              currentUser 
+                ? "bg-emerald-500/5 hover:bg-emerald-500/10 border-emerald-500/25 hover:border-emerald-500/40 text-emerald-400"
+                : "bg-blue-600/10 hover:bg-blue-600/20 border-blue-500/25 hover:border-blue-500/40 text-blue-400 shadow-sm shadow-blue-500/5"
+            }`}
+            id="btn-trigger-auth-modal"
+          >
+            <UserIcon size={14} className={currentUser ? "text-emerald-400" : "text-blue-400"} />
+            <span>
+              {currentUser 
+                ? (currentUser.email ? currentUser.email.split("@")[0] : (authTranslations[currentLanguage] || authTranslations.en).account) 
+                : (authTranslations[currentLanguage] || authTranslations.en).account}
+            </span>
+          </button>
+
           {/* Elegant Language Selector */}
           <div className="relative" id="language-picker-wrapper">
             <select
@@ -531,6 +605,17 @@ export default function App() {
           <span>{t.footerEngineActive}</span>
         </span>
       </footer>
+
+      {/* Cloud Account Authentication Modal */}
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        currentLanguage={currentLanguage}
+        currentUser={currentUser}
+        onSyncCompleted={(completed) => {
+          setCompletedLessons(completed);
+        }}
+      />
     </div>
   );
 }

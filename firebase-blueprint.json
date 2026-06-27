@@ -1,0 +1,11 @@
+{
+  "collections": {
+    "users": {
+      "fields": {
+        "email": "string",
+        "completedLessons": "array",
+        "createdAt": "timestamp"
+      }
+    }
+  }
+}
