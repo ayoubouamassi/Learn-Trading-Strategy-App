@@ -1,0 +1,6 @@
+{
+  "name": "Trading Strategy Academy",
+  "description": "Master real-world trading strategies with high-fidelity historical simulations, interactive lessons, structured quizzes, and multi-language support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
